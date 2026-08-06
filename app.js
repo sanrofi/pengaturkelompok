@@ -618,11 +618,21 @@ async function renderDaftarKelasRekap() {
 
                     if (sesiObj && sesiObj.groups) {
                         sesiObj.groups.forEach(g => {
-                            if (g.members && g.members.some(m => m.id === s.id)) {
-                                nilaiSiswa = g.score || 0;
-                                totalSkor += Number(nilaiSiswa);
-                                jumlahSesiDiikuti++;
-                            }
+							// KODE BARU (Aman dan Presisi)
+							if (g.members && g.members.length > 0) {
+								const isMember = g.members.some(m => {
+									// Cocokkan berdasarkan ID atau NIS (String & Number safe)
+									if (m.id && s.id && String(m.id) === String(s.id)) return true;
+									if (m.nis && s.nis && String(m.nis).trim() === String(s.nis).trim()) return true;
+									return false;
+								});
+
+								if (isMember) {
+									nilaiSiswa = Number(g.score) || 0;
+									totalSkor += nilaiSiswa;
+									jumlahSesiDiikuti++;
+								}
+							}
                         });
                     }
 
