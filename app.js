@@ -1,10 +1,8 @@
-// Import Modul Firebase Realtime Database SDK v10
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
 import { 
     getDatabase, ref, set, push, get, child, remove 
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
-// 1. Konfigurasi Firebase Anda
 const firebaseConfig = {
   apiKey: "AIzaSyDU1gaKy1FKc2guI8pNgBjNypRTlc9z8P8",
   authDomain: "pengatur-kelompok.firebaseapp.com",
@@ -15,64 +13,35 @@ const firebaseConfig = {
   appId: "1:8185428648:web:f4c3a8d0cc7dd2f04ba09d"
 };
 
-// Konfigurasi Cloudinary Anda
 const CLOUDINARY_CLOUD_NAME = "lk452fao";
 const CLOUDINARY_UPLOAD_PRESET = "kerja_kelompok";
 
-// Inisialisasi Firebase & Realtime Database
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
-// Variabel global penampung data
 let masterSiswa = [];
 let masterKelas = [];
 let dataKelompokAktif = [];
-let pemetaanManualTemp = {}; // { studentId: groupId }
-let exportDataCache = []; // Penampung data untuk export Excel
+let pemetaanManualTemp = {}; 
+let exportDataCache = {}; 
 
-// Key LocalStorage untuk Auto-Save Sesi Berjalan (POIN 2)
 const DRAFT_SESSION_KEY = "DRAFT_KELOMPOK_SESSION";
 
 // ==========================================
-// A. LOGIKA UTAMA SAAT HALAMAN DIMUAT
+// A. INISIALISASI HALAMAN
 // ==========================================
 window.addEventListener('DOMContentLoaded', async () => {
     await muatDataKelas();
     await muatDataSiswa();
-    renderTabelSiswa();
-    renderTabelRekap();
-    muatDraftSesi(); // Pulihkan data jika halaman di-refresh
+    renderDaftarKelasAdmin();
+    renderDaftarKelasRekap();
+    muatDraftSesi();
 });
 
-
 // ==========================================
-// B. MODUL ADMIN & DATA SISWA
+// B. MODUL DATA KELAS & SISWA
 // ==========================================
 
-// 1. Tambah Kelas Baru
-window.tambahKelas = async function() {
-    const input = document.getElementById('input-nama-kelas');
-    const namaKelas = input.value.trim();
-    if (!namaKelas) return alert("Nama kelas tidak boleh kosong!");
-
-    await simpanNamaKelasKeDB(namaKelas);
-    alert("Kelas berhasil ditambahkan!");
-    input.value = "";
-    await muatDataKelas();
-}
-
-// Fungsi bantu simpan kelas jika belum ada di database (POIN 1)
-async function simpanNamaKelasKeDB(namaKelas) {
-    if (!namaKelas) return;
-    const sudahAda = masterKelas.some(k => k.className.toLowerCase() === namaKelas.toLowerCase());
-    if (!sudahAda) {
-        const classesRef = ref(db, 'classes');
-        const newClassRef = push(classesRef);
-        await set(newClassRef, { className: namaKelas });
-    }
-}
-
-// 2. Load Data Kelas dari Realtime Database
 async function muatDataKelas() {
     try {
         const dbRef = ref(db);
@@ -86,22 +55,83 @@ async function muatDataKelas() {
             });
         }
 
-        const selectKelompok = document.getElementById('select-kelas');
-        const selectFilterRekap = document.getElementById('filter-kelas-rekap');
+        // PERBAIKAN 1: Mencegah Duplikasi Nama Kelas dengan Normalisasi
+        const uniqueClasses = [];
+        const seenNames = new Set();
 
+        masterKelas.forEach(k => {
+            const cleanName = k.className.trim();
+            if (!seenNames.has(cleanName.toLowerCase())) {
+                seenNames.add(cleanName.toLowerCase());
+                uniqueClasses.push({ id: k.id, className: cleanName });
+            }
+        });
+
+        masterKelas = uniqueClasses;
+
+        const selectKelompok = document.getElementById('select-kelas');
         selectKelompok.innerHTML = '<option value="">-- Pilih Kelas --</option>';
-        selectFilterRekap.innerHTML = '<option value="">Semua Kelas</option>';
 
         masterKelas.forEach(k => {
             selectKelompok.innerHTML += `<option value="${k.className}">${k.className}</option>`;
-            selectFilterRekap.innerHTML += `<option value="${k.className}">${k.className}</option>`;
         });
     } catch (e) {
         console.error("Gagal memuat kelas: ", e);
     }
 }
 
-// 3. Load Data Siswa dari Realtime Database
+async function simpanNamaKelasKeDB(namaKelas) {
+    if (!namaKelas) return;
+    const cleanName = namaKelas.trim();
+    const sudahAda = masterKelas.some(k => k.className.toLowerCase() === cleanName.toLowerCase());
+    if (!sudahAda) {
+        const classesRef = ref(db, 'classes');
+        const newClassRef = push(classesRef);
+        await set(newClassRef, { className: cleanName });
+    }
+}
+
+window.tambahKelas = async function() {
+    const input = document.getElementById('input-nama-kelas');
+    const namaKelas = input.value.trim();
+    if (!namaKelas) return alert("Nama kelas tidak boleh kosong!");
+
+    await simpanNamaKelasKeDB(namaKelas);
+    alert("Kelas berhasil ditambahkan!");
+    input.value = "";
+    await muatDataKelas();
+    renderDaftarKelasAdmin();
+    renderDaftarKelasRekap();
+}
+
+// PERBAIKAN 2: Hapus Kelas beserta Seluruh Siswanya
+window.hapusKelas = async function(namaKelas) {
+    if (confirm(`Apakah Anda yakin ingin menghapus kelas "${namaKelas}" beserta seluruh data siswanya?`)) {
+        try {
+            // Hapus dari node 'classes'
+            const kelasObj = masterKelas.filter(k => k.className.toLowerCase() === namaKelas.toLowerCase());
+            for (const k of kelasObj) {
+                await remove(ref(db, `classes/${k.id}`));
+            }
+
+            // Hapus siswa yang berada di kelas tersebut
+            const siswaDiKelas = masterSiswa.filter(s => s.kelas.trim().toLowerCase() === namaKelas.toLowerCase());
+            for (const s of siswaDiKelas) {
+                await remove(ref(db, `students/${s.id}`));
+            }
+
+            alert(`Kelas ${namaKelas} dan siswanya berhasil dihapus.`);
+            await muatDataKelas();
+            await muatDataSiswa();
+            renderDaftarKelasAdmin();
+            renderDaftarKelasRekap();
+        } catch (e) {
+            console.error("Gagal menghapus kelas: ", e);
+            alert("Gagal menghapus kelas.");
+        }
+    }
+}
+
 async function muatDataSiswa() {
     try {
         const dbRef = ref(db);
@@ -111,7 +141,11 @@ async function muatDataSiswa() {
         if (snapshot.exists()) {
             const data = snapshot.val();
             Object.keys(data).forEach(key => {
-                masterSiswa.push({ id: key, ...data[key] });
+                masterSiswa.push({ 
+                    id: key, 
+                    ...data[key],
+                    kelas: data[key].kelas ? data[key].kelas.trim() : ""
+                });
             });
         }
     } catch (e) {
@@ -119,41 +153,77 @@ async function muatDataSiswa() {
     }
 }
 
-// 4. Render Tabel Siswa
-function renderTabelSiswa() {
-    const tbody = document.getElementById('tabel-siswa-body');
-    if (masterSiswa.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-slate-400">Belum ada data siswa.</td></tr>';
+// PERBAIKAN 2: Tampilan Accordion Daftar Kelas di Tab Admin
+function renderDaftarKelasAdmin() {
+    const container = document.getElementById('daftar-kelas-accordion');
+    if (masterKelas.length === 0) {
+        container.innerHTML = '<div class="p-4 text-center text-slate-400 border rounded-lg">Belum ada kelas terdaftar.</div>';
         return;
     }
 
-    tbody.innerHTML = masterSiswa.map(s => `
-        <tr class="border-b hover:bg-slate-50">
-            <td class="p-3 border">${s.nis}</td>
-            <td class="p-3 border font-semibold">${s.nama}</td>
-            <td class="p-3 border">${s.kelas}</td>
-            <td class="p-3 border text-center">
-                <button onclick="hapusSiswa('${s.id}')" class="text-red-600 hover:text-red-800 text-xs font-bold">Hapus</button>
-            </td>
-        </tr>
-    `).join('');
+    container.innerHTML = masterKelas.map(k => {
+        const siswaKelas = masterSiswa.filter(s => s.kelas.toLowerCase() === k.className.toLowerCase());
+        return `
+            <div class="border border-slate-200 rounded-lg overflow-hidden bg-white">
+                <div class="flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition cursor-pointer" onclick="toggleAccordion('admin-kelas-${k.id}')">
+                    <div class="font-bold text-slate-700 flex items-center gap-2">
+                        <span>📁 ${k.className}</span>
+                        <span class="text-xs bg-indigo-100 text-indigo-700 font-semibold px-2 py-0.5 rounded-full">${siswaKelas.length} Siswa</span>
+                    </div>
+                    <div class="flex items-center gap-2" onclick="event.stopPropagation()">
+                        <button onclick="hapusKelas('${k.className}')" class="bg-red-100 hover:bg-red-200 text-red-700 text-xs px-3 py-1 rounded font-bold">Hapus Kelas</button>
+                    </div>
+                </div>
+                <div id="admin-kelas-${k.id}" class="hidden p-4 border-t border-slate-200">
+                    ${siswaKelas.length === 0 ? '<p class="text-xs text-slate-400 italic">Belum ada siswa di kelas ini.</p>' : `
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-xs text-left border-collapse">
+                                <thead class="bg-slate-100">
+                                    <tr>
+                                        <th class="p-2 border">NIS</th>
+                                        <th class="p-2 border">Nama Siswa</th>
+                                        <th class="p-2 border text-center">Aksi</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${siswaKelas.map(s => `
+                                        <tr class="border-b hover:bg-slate-50">
+                                            <td class="p-2 border">${s.nis}</td>
+                                            <td class="p-2 border font-semibold">${s.nama}</td>
+                                            <td class="p-2 border text-center">
+                                                <button onclick="hapusSiswa('${s.id}')" class="text-red-600 hover:underline font-bold">Hapus</button>
+                                            </td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    `}
+                </div>
+            </div>
+        `;
+    }).join('');
 }
 
-// 5. Hapus Siswa
+window.toggleAccordion = function(elementId) {
+    const el = document.getElementById(elementId);
+    if (el) el.classList.toggle('hidden');
+}
+
 window.hapusSiswa = async function(id) {
     if (confirm("Apakah Anda yakin ingin menghapus siswa ini?")) {
         try {
             await remove(ref(db, `students/${id}`));
             await muatDataSiswa();
-            renderTabelSiswa();
-            renderTabelRekap();
+            renderDaftarKelasAdmin();
+            renderDaftarKelasRekap();
         } catch (e) {
             console.error("Gagal menghapus siswa: ", e);
         }
     }
 }
 
-// 6. Import Data Excel / CSV (POIN 1: Otomatis Daftarkan Kelas Baru)
+// PERBAIKAN 1: Import Excel Tanpa Buat Kelas Duplikat
 window.prosesImportExcel = function() {
     const fileInput = document.getElementById('file-excel');
     const file = fileInput.files[0];
@@ -169,7 +239,6 @@ window.prosesImportExcel = function() {
             const worksheet = workbook.Sheets[firstSheetName];
             
             const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
-
             if (jsonData.length === 0) return alert("File Excel/CSV kosong!");
 
             let count = 0;
@@ -186,24 +255,19 @@ window.prosesImportExcel = function() {
                 });
 
                 if (nis && nama && kelas) {
-                    // Otomatis simpan kelas baru jika belum terdaftar ke database
                     await simpanNamaKelasKeDB(kelas);
-
                     const newStudentRef = push(studentsRef);
                     await set(newStudentRef, { nis, nama, kelas });
                     count++;
                 }
             }
 
-            if (count === 0) {
-                alert("Gagal membaca data! Pastikan file memuat kolom: NIS, NAMA, dan KELAS.");
-            } else {
-                alert(`Berhasil mengimpor ${count} data siswa dan mendaftarkan kelasnya!`);
-                fileInput.value = "";
-                await muatDataKelas();
-                await muatDataSiswa();
-                renderTabelSiswa();
-            }
+            alert(`Berhasil mengimpor ${count} data siswa!`);
+            fileInput.value = "";
+            await muatDataKelas();
+            await muatDataSiswa();
+            renderDaftarKelasAdmin();
+            renderDaftarKelasRekap();
         } catch (err) {
             console.error("Error import data: ", err);
             alert("Terjadi kesalahan saat memproses file.");
@@ -212,12 +276,10 @@ window.prosesImportExcel = function() {
     reader.readAsArrayBuffer(file);
 }
 
-
 // ==========================================
 // C. LOGIKA PEMBAGIAN KELOMPOK & DRAFT SESI
 // ==========================================
 
-// Load Siswa Berdasarkan Kelas
 window.loadSiswaByKelas = function() {
     const kelasSelected = document.getElementById('select-kelas').value;
     const boxPresensi = document.getElementById('box-presensi');
@@ -229,7 +291,7 @@ window.loadSiswaByKelas = function() {
         return;
     }
 
-    const siswaKelas = masterSiswa.filter(s => s.kelas === kelasSelected);
+    const siswaKelas = masterSiswa.filter(s => s.kelas.toLowerCase() === kelasSelected.toLowerCase());
     if (siswaKelas.length === 0) {
         alert("Tidak ada data siswa di kelas ini! Tambahkan siswa terlebih dahulu.");
         boxPresensi.classList.add('hidden');
@@ -246,7 +308,6 @@ window.loadSiswaByKelas = function() {
     boxPresensi.classList.remove('hidden');
 }
 
-// Algoritma Pengacak / Pembuat Kelompok Otomatis
 window.prosesBagiKelompok = function(tipe) {
     const kelasSelected = document.getElementById('select-kelas').value;
     const totalKelompok = parseInt(document.getElementById('jumlah-kelompok').value);
@@ -254,7 +315,7 @@ window.prosesBagiKelompok = function(tipe) {
     if (!kelasSelected || totalKelompok < 1) return alert("Lengkapi pilihan kelas dan jumlah kelompok!");
 
     const checkedAbsen = Array.from(document.querySelectorAll('.checkbox-absen:checked')).map(cb => cb.value);
-    const siswaHadir = masterSiswa.filter(s => s.kelas === kelasSelected && !checkedAbsen.includes(s.id));
+    const siswaHadir = masterSiswa.filter(s => s.kelas.toLowerCase() === kelasSelected.toLowerCase() && !checkedAbsen.includes(s.id));
 
     if (siswaHadir.length === 0) return alert("Semua siswa ditandai tidak hadir!");
 
@@ -281,10 +342,9 @@ window.prosesBagiKelompok = function(tipe) {
     document.getElementById('box-pemetaan-manual').classList.add('hidden');
     renderKartuKelompok();
     document.getElementById('box-hasil-kelompok').classList.remove('hidden');
-    simpanDraftSesi(); // Simpan draft
+    simpanDraftSesi();
 }
 
-// --- POIN 3: FITUR PEMETAAN KELOMPOK MANUAL DENGAN NOTIFIKASI JUMLAH ---
 window.tampilkanPemetaanManual = function() {
     const kelasSelected = document.getElementById('select-kelas').value;
     const totalKelompok = parseInt(document.getElementById('jumlah-kelompok').value);
@@ -292,12 +352,11 @@ window.tampilkanPemetaanManual = function() {
     if (!kelasSelected || totalKelompok < 1) return alert("Lengkapi pilihan kelas dan jumlah kelompok!");
 
     const checkedAbsen = Array.from(document.querySelectorAll('.checkbox-absen:checked')).map(cb => cb.value);
-    const siswaHadir = masterSiswa.filter(s => s.kelas === kelasSelected && !checkedAbsen.includes(s.id));
+    const siswaHadir = masterSiswa.filter(s => s.kelas.toLowerCase() === kelasSelected.toLowerCase() && !checkedAbsen.includes(s.id));
 
     if (siswaHadir.length === 0) return alert("Semua siswa ditandai tidak hadir!");
 
     pemetaanManualTemp = {};
-    // Atur default siswa ke kelompok 1
     siswaHadir.forEach(s => { pemetaanManualTemp[s.id] = 1; });
 
     const containerManual = document.getElementById('daftar-pemetaan-manual');
@@ -315,9 +374,7 @@ window.tampilkanPemetaanManual = function() {
         return `
             <div class="flex flex-wrap items-center justify-between p-2 bg-white rounded border border-slate-200 gap-2">
                 <span class="font-medium text-xs text-slate-700">${s.nama} (${s.nis})</span>
-                <div class="flex gap-1 overflow-x-auto">
-                    ${radioOptions}
-                </div>
+                <div class="flex gap-1 overflow-x-auto">${radioOptions}</div>
             </div>
         `;
     }).join('');
@@ -329,11 +386,9 @@ window.tampilkanPemetaanManual = function() {
 window.pilihKelompokSiswaManual = function(studentId, groupId) {
     pemetaanManualTemp[studentId] = Number(groupId);
     const totalKelompok = parseInt(document.getElementById('jumlah-kelompok').value);
-    const totalSiswa = Object.keys(pemetaanManualTemp).length;
-    updateNotifikasiKuotaKelompok(totalKelompok, totalSiswa);
+    updateNotifikasiKuotaKelompok(totalKelompok, Object.keys(pemetaanManualTemp).length);
 }
 
-// Update Notifikasi Jumlah Anggota Kelompok
 function updateNotifikasiKuotaKelompok(totalKelompok, totalSiswa) {
     const ringkasanBox = document.getElementById('ringkasan-kuota-kelompok');
     const counts = {};
@@ -352,7 +407,6 @@ function updateNotifikasiKuotaKelompok(totalKelompok, totalSiswa) {
 
 window.prosesPemetaanManualSelesai = function() {
     const totalKelompok = parseInt(document.getElementById('jumlah-kelompok').value);
-    const kelasSelected = document.getElementById('select-kelas').value;
 
     dataKelompokAktif = Array.from({ length: totalKelompok }, (_, i) => ({
         groupId: i + 1,
@@ -372,17 +426,16 @@ window.prosesPemetaanManualSelesai = function() {
     document.getElementById('box-pemetaan-manual').classList.add('hidden');
     renderKartuKelompok();
     document.getElementById('box-hasil-kelompok').classList.remove('hidden');
-    simpanDraftSesi(); // Simpan draft
+    simpanDraftSesi();
 }
 
-
-// --- POIN 2: SISTEM DRAFT SESI & AUTO SAVE (AGAR TIDAK HILANG SAAT REFRESH) ---
 function simpanDraftSesi() {
     const kelasSelected = document.getElementById('select-kelas').value;
     if (dataKelompokAktif.length === 0) return;
 
     const draftData = {
         kelas: kelasSelected,
+        nomorSesi: document.getElementById('input-nomor-sesi').value || 1,
         jumlahKelompok: document.getElementById('jumlah-kelompok').value,
         dataKelompok: dataKelompokAktif
     };
@@ -398,6 +451,7 @@ function muatDraftSesi() {
         const draft = JSON.parse(savedDraft);
         if (draft && draft.dataKelompok && draft.dataKelompok.length > 0) {
             document.getElementById('select-kelas').value = draft.kelas || "";
+            document.getElementById('input-nomor-sesi').value = draft.nomorSesi || 1;
             document.getElementById('jumlah-kelompok').value = draft.jumlahKelompok || 2;
             dataKelompokAktif = draft.dataKelompok;
 
@@ -413,8 +467,6 @@ function hapusDraftSesi() {
     localStorage.removeItem(DRAFT_SESSION_KEY);
 }
 
-
-// Render Kartu Kelompok
 function renderKartuKelompok() {
     const container = document.getElementById('kontainer-kartu-kelompok');
 
@@ -449,7 +501,6 @@ function renderKartuKelompok() {
     `).join('');
 }
 
-// Upload Foto ke Cloudinary
 window.uploadFotoLive = async function(inputElement, groupIndex) {
     const file = inputElement.files[0];
     if (!file) return;
@@ -467,12 +518,11 @@ window.uploadFotoLive = async function(inputElement, groupIndex) {
         });
 
         const data = await response.json();
-        
         if (data.secure_url) {
             dataKelompokAktif[groupIndex].photoUrl = data.secure_url;
             alert(`Foto Kelompok ${dataKelompokAktif[groupIndex].groupId} berhasil diunggah!`);
             renderKartuKelompok();
-            simpanDraftSesi(); // Auto save foto ke draft
+            simpanDraftSesi();
         } else {
             alert("Gagal mengunggah foto ke Cloudinary.");
         }
@@ -484,21 +534,22 @@ window.uploadFotoLive = async function(inputElement, groupIndex) {
     }
 }
 
-// Update Nilai
 window.updateNilaiKelompok = function(index, value) {
     dataKelompokAktif[index].score = Number(value);
-    simpanDraftSesi(); // Auto save nilai ke draft
+    simpanDraftSesi();
 }
 
-// Simpan Sesi Permanen ke Firebase (POIN 2)
+// PERBAIKAN 4: Simpan Sesi Berdasarkan Sesi Input Manual Guru
 window.simpanSeluruhSesi = async function() {
     const kelasSelected = document.getElementById('select-kelas').value;
+    const nomorSesi = parseInt(document.getElementById('input-nomor-sesi').value) || 1;
 
     if (dataKelompokAktif.length === 0) return alert("Belum ada kelompok yang dibuat!");
 
     try {
         const payloadSesi = {
             kelas: kelasSelected,
+            nomorSesi: nomorSesi,
             tanggal: new Date().toISOString(),
             groups: dataKelompokAktif
         };
@@ -507,28 +558,26 @@ window.simpanSeluruhSesi = async function() {
         const newSessionRef = push(sessionsRef);
         await set(newSessionRef, payloadSesi);
 
-        alert("Seluruh data kelompok, foto, dan nilai berhasil disimpan secara permanen!");
+        alert(`Seluruh data Sesi Ke-${nomorSesi} berhasil disimpan!`);
         
-        hapusDraftSesi(); // Hapus draft karena sesi sudah resmi berakhir
+        hapusDraftSesi();
         document.getElementById('box-hasil-kelompok').classList.add('hidden');
         dataKelompokAktif = [];
         
-        await renderTabelRekap();
+        renderDaftarKelasRekap();
     } catch (e) {
         console.error("Error simpan sesi: ", e);
         alert("Gagal menyimpan data ke Realtime Database.");
     }
 }
 
-
 // ==========================================
-// D. REKAPITULASI & EXPORT EXCEL (POIN 4)
+// D. REKAPITULASI NILAI PER KELAS (PERBAIKAN 3)
 // ==========================================
-async function renderTabelRekap() {
-    const filterKelas = document.getElementById('filter-kelas-rekap').value;
-    const thead = document.getElementById('tabel-rekap-head');
-    const tbody = document.getElementById('tabel-rekap-body');
 
+async function renderDaftarKelasRekap() {
+    const container = document.getElementById('daftar-kelas-rekap-accordion');
+    
     try {
         const dbRef = ref(db);
         const snapshot = await get(child(dbRef, 'group_sessions'));
@@ -541,77 +590,95 @@ async function renderTabelRekap() {
             });
         }
 
-        // Urutkan sesi berdasarkan tanggal
-        allSessions.sort((a, b) => new Date(a.tanggal) - new Date(b.tanggal));
-
-        // Filter sesi berdasarkan kelas jika dipilih
-        if (filterKelas) {
-            allSessions = allSessions.filter(s => s.kelas === filterKelas);
-        }
-
-        // Filter siswa
-        let siswaFiltered = masterSiswa;
-        if (filterKelas) {
-            siswaFiltered = masterSiswa.filter(s => s.kelas === filterKelas);
-        }
-
-        // Buat Dynamic Header (NIS, Nama, Kelas, Sesi 1, Sesi 2, ..., Rata-Rata)
-        let headerHTML = `
-            <tr>
-                <th class="p-3 border">NIS</th>
-                <th class="p-3 border">Nama Siswa</th>
-                <th class="p-3 border">Kelas</th>
-        `;
-        allSessions.forEach((s, idx) => {
-            headerHTML += `<th class="p-3 border text-center">Sesi ${idx + 1}</th>`;
-        });
-        headerHTML += `<th class="p-3 border text-center bg-indigo-100">Rata-Rata</th></tr>`;
-        thead.innerHTML = headerHTML;
-
-        if (siswaFiltered.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="10" class="p-4 text-center text-slate-400">Tidak ada data rekap.</td></tr>';
-            exportDataCache = [];
+        if (masterKelas.length === 0) {
+            container.innerHTML = '<div class="p-4 text-center text-slate-400 border rounded-lg">Belum ada kelas terdaftar.</div>';
             return;
         }
 
-        // Susun Data Baris & Export Cache
-        exportDataCache = [];
+        container.innerHTML = masterKelas.map(k => {
+            // Filter sesi & siswa untuk kelas ini
+            const sesiKelas = allSessions.filter(s => s.kelas.toLowerCase() === k.className.toLowerCase());
+            const siswaKelas = masterSiswa.filter(s => s.kelas.toLowerCase() === k.className.toLowerCase());
 
-        tbody.innerHTML = siswaFiltered.map(s => {
-            let totalSkor = 0;
-            let jumlahSesiDiikuti = 0;
-            let rowExport = { NIS: s.nis, Nama: s.nama, Kelas: s.kelas };
+            // Dapatkan list nomor sesi unik
+            const nomorSesiUnik = [...new Set(sesiKelas.map(s => s.nomorSesi || 1))].sort((a,b) => a - b);
 
-            let kolomSesiHTML = allSessions.map((session, idx) => {
-                let nilaiSiswa = "-";
-                
-                if (session.groups) {
-                    session.groups.forEach(g => {
-                        if (g.members && g.members.some(m => m.id === s.id)) {
-                            nilaiSiswa = g.score || 0;
-                            totalSkor += Number(nilaiSiswa);
-                            jumlahSesiDiikuti++;
-                        }
-                    });
-                }
+            // Buat Cache untuk Download Excel per Kelas
+            const exportData = [];
 
-                rowExport[`Sesi ${idx + 1}`] = nilaiSiswa;
-                return `<td class="p-3 border text-center">${nilaiSiswa}</td>`;
+            let tbodyHTML = siswaKelas.map(s => {
+                let totalSkor = 0;
+                let jumlahSesiDiikuti = 0;
+                let rowExport = { NIS: s.nis, Nama: s.nama, Kelas: k.className };
+
+                let kolomSesiHTML = nomorSesiUnik.map(noSesi => {
+                    let nilaiSiswa = "-";
+                    // Cari sesi dengan nomorSesi ini
+                    const sesiObj = sesiKelas.find(sk => (sk.nomorSesi || 1) === noSesi);
+
+                    if (sesiObj && sesiObj.groups) {
+                        sesiObj.groups.forEach(g => {
+                            if (g.members && g.members.some(m => m.id === s.id)) {
+                                nilaiSiswa = g.score || 0;
+                                totalSkor += Number(nilaiSiswa);
+                                jumlahSesiDiikuti++;
+                            }
+                        });
+                    }
+
+                    rowExport[`Sesi ${noSesi}`] = nilaiSiswa;
+                    return `<td class="p-2 border text-center">${nilaiSiswa}</td>`;
+                }).join('');
+
+                const rataRata = jumlahSesiDiikuti > 0 ? (totalSkor / jumlahSesiDiikuti).toFixed(1) : "0.0";
+                rowExport["Rata-Rata"] = parseFloat(rataRata);
+                exportData.push(rowExport);
+
+                return `
+                    <tr class="border-b hover:bg-slate-50">
+                        <td class="p-2 border">${s.nis}</td>
+                        <td class="p-2 border font-semibold">${s.nama}</td>
+                        ${kolomSesiHTML}
+                        <td class="p-2 border text-center font-bold text-indigo-700 bg-indigo-50">${rataRata}</td>
+                    </tr>
+                `;
             }).join('');
 
-            const rataRata = jumlahSesiDiikuti > 0 ? (totalSkor / jumlahSesiDiikuti).toFixed(1) : "0.0";
-            rowExport["Rata-Rata"] = parseFloat(rataRata);
-
-            exportDataCache.push(rowExport);
+            exportDataCache[k.className] = exportData;
 
             return `
-                <tr class="border-b hover:bg-slate-50">
-                    <td class="p-3 border">${s.nis}</td>
-                    <td class="p-3 border font-semibold">${s.nama}</td>
-                    <td class="p-3 border">${s.kelas}</td>
-                    ${kolomSesiHTML}
-                    <td class="p-3 border text-center font-bold text-indigo-700 bg-indigo-50/50">${rataRata}</td>
-                </tr>
+                <div class="border border-slate-200 rounded-lg overflow-hidden bg-white">
+                    <div class="flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition cursor-pointer" onclick="toggleAccordion('rekap-kelas-${k.id}')">
+                        <div class="font-bold text-slate-700 flex items-center gap-2">
+                            <span>📊 Kelas ${k.className}</span>
+                            <span class="text-xs bg-indigo-100 text-indigo-700 font-semibold px-2 py-0.5 rounded-full">${siswaKelas.length} Siswa</span>
+                        </div>
+                        <div onclick="event.stopPropagation()">
+                            <button onclick="downloadRekapExcelPerKelas('${k.className}')" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1 rounded text-xs">
+                                📊 Unduh Excel
+                            </button>
+                        </div>
+                    </div>
+                    <div id="rekap-kelas-${k.id}" class="hidden p-4 border-t border-slate-200">
+                        ${siswaKelas.length === 0 ? '<p class="text-xs text-slate-400 italic">Belum ada siswa di kelas ini.</p>' : `
+                            <div class="overflow-x-auto">
+                                <table class="w-full text-xs text-left border-collapse">
+                                    <thead class="bg-indigo-50 text-indigo-900">
+                                        <tr>
+                                            <th class="p-2 border">NIS</th>
+                                            <th class="p-2 border">Nama Siswa</th>
+                                            ${nomorSesiUnik.map(n => `<th class="p-2 border text-center">Sesi ${n}</th>`).join('')}
+                                            <th class="p-2 border text-center bg-indigo-100">Rata-Rata</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${tbodyHTML}
+                                    </tbody>
+                                </table>
+                            </div>
+                        `}
+                    </div>
+                </div>
             `;
         }).join('');
 
@@ -620,16 +687,14 @@ async function renderTabelRekap() {
     }
 }
 
-// POIN 4: Fungsi Unduh Rekap Excel / CSV
-window.downloadRekapExcel = function() {
-    if (exportDataCache.length === 0) {
-        return alert("Tidak ada data rekap yang dapat diunduh!");
+window.downloadRekapExcelPerKelas = function(namaKelas) {
+    const dataClass = exportDataCache[namaKelas];
+    if (!dataClass || dataClass.length === 0) {
+        return alert("Tidak ada data rekap untuk kelas ini!");
     }
 
-    const kelasSelected = document.getElementById('filter-kelas-rekap').value || "Semua_Kelas";
-    const fileName = `Rekap_Nilai_Kelompok_${kelasSelected}.xlsx`;
-
-    const worksheet = XLSX.utils.json_to_sheet(exportDataCache);
+    const fileName = `Rekap_Nilai_${namaKelas.replace(/\s+/g, '_')}.xlsx`;
+    const worksheet = XLSX.utils.json_to_sheet(dataClass);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Rekap Nilai");
 
