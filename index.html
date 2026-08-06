@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aplikasi Pengatur Kelompok & Penilaian</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- SheetJS CDN untuk Import & Export Excel/CSV -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body class="bg-slate-100 text-slate-800 font-sans min-h-screen pb-12">
+
+    <!-- Header / Navigasi -->
+    <header class="bg-indigo-600 text-white p-4 shadow-lg sticky top-0 z-50">
+        <div class="max-w-4xl mx-auto flex justify-between items-center">
+            <h1 class="text-xl font-bold flex items-center gap-2">
+                👥 KelompokSiswa
+            </h1>
+            <nav class="flex gap-2">
+                <button onclick="switchTab('kelompok')" id="btn-tab-kelompok" class="px-4 py-2 rounded-lg bg-indigo-700 font-semibold text-sm">Bagi Kelompok</button>
+                <button onclick="switchTab('admin')" id="btn-tab-admin" class="px-4 py-2 rounded-lg hover:bg-indigo-500 font-semibold text-sm">Admin & Data Siswa</button>
+                <button onclick="switchTab('rekap')" id="btn-tab-rekap" class="px-4 py-2 rounded-lg hover:bg-indigo-500 font-semibold text-sm">Rekap Nilai</button>
+            </nav>
+        </div>
+    </header>
+
+    <main class="max-w-4xl mx-auto mt-6 p-4">
+
+        <!-- TAB 1: BAGI KELOMPOK -->
+        <section id="tab-kelompok" class="space-y-6">
+            <div class="bg-white p-6 rounded-xl shadow-md border border-slate-200">
+                <h2 class="text-lg font-bold mb-4 text-indigo-700">1. Pengaturan Awal Sesi</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium mb-1">Pilih Kelas:</label>
+                        <select id="select-kelas" onchange="loadSiswaByKelas()" class="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500">
+                            <option value="">-- Pilih Kelas --</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium mb-1">Jumlah Kelompok Yang Diinginkan:</label>
+                        <input type="number" id="jumlah-kelompok" min="1" value="2" class="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Presensi Ketidakhadiran -->
+            <div id="box-presensi" class="bg-white p-6 rounded-xl shadow-md border border-slate-200 hidden">
+                <h2 class="text-lg font-bold mb-2 text-indigo-700">2. Tandai Siswa Yang TIDAK HADIR</h2>
+                <p class="text-xs text-slate-500 mb-4">Siswa yang dicentang tidak akan dimasukkan ke dalam kelompok.</p>
+                <div id="daftar-siswa-absen" class="grid grid-cols-2 md:grid-cols-3 gap-3 max-h-60 overflow-y-auto p-2 border rounded-lg bg-slate-50 mb-6">
+                    <!-- Checkbox siswa muncul via JS -->
+                </div>
+
+                <div class="flex gap-3 border-t pt-4">
+                    <button onclick="prosesBagiKelompok('acak')" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl shadow-md transition">
+                        🎲 Bagi Kelompok Otomatis (Acak)
+                    </button>
+                    <button onclick="tampilkanPemetaanManual()" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl shadow-md transition">
+                        ✏️ Pemetaan Kelompok Manual
+                    </button>
+                </div>
+            </div>
+
+            <!-- Box Pemetaan Manual (POIN 3) -->
+            <div id="box-pemetaan-manual" class="bg-white p-6 rounded-xl shadow-md border border-slate-200 space-y-4 hidden">
+                <div class="flex justify-between items-center border-b pb-3">
+                    <h2 class="text-lg font-bold text-emerald-700">Petakan Siswa ke Kelompok</h2>
+                    <div id="ringkasan-kuota-kelompok" class="flex gap-2 text-xs font-semibold">
+                        <!-- Ringkasan kuota per kelompok dirender di sini -->
+                    </div>
+                </div>
+                <p class="text-xs text-slate-500">Pilih nomor kelompok untuk masing-masing siswa yang hadir:</p>
+
+                <div id="daftar-pemetaan-manual" class="space-y-2 max-h-80 overflow-y-auto p-2 border rounded-lg bg-slate-50">
+                    <!-- Item siswa & pilihan kelompok dirender via JS -->
+                </div>
+
+                <button onclick="prosesPemetaanManualSelesai()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl shadow-md">
+                    ✅ Selesaikan Pembagian Kelompok
+                </button>
+            </div>
+
+            <!-- Hasil Kelompok & Penilaian -->
+            <div id="box-hasil-kelompok" class="space-y-6 hidden">
+                <div class="flex justify-between items-center">
+                    <h2 class="text-xl font-bold text-slate-800">3. Pembagian Kelompok & Penilaian</h2>
+                    <button onclick="simpanSeluruhSesi()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-6 py-2 rounded-xl shadow-md">
+                        💾 Simpan Semua Nilai & Sesi
+                    </button>
+                </div>
+
+                <!-- Kontainer Kartu Kelompok -->
+                <div id="kontainer-kartu-kelompok" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <!-- Kartu kelompok dirender via JS -->
+                </div>
+            </div>
+        </section>
+
+
+        <!-- TAB 2: ADMIN & DATA SISWA -->
+        <section id="tab-admin" class="space-y-6 hidden">
+            <!-- Tambah Kelas Baru -->
+            <div class="bg-white p-6 rounded-xl shadow-md border border-slate-200">
+                <h2 class="text-lg font-bold mb-4 text-indigo-700">Tambah Kelas Baru (Manual)</h2>
+                <div class="flex gap-3">
+                    <input type="text" id="input-nama-kelas" placeholder="Contoh: X IPA 1" class="flex-1 border border-slate-300 rounded-lg p-2">
+                    <button onclick="tambahKelas()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-lg">Simpan Kelas</button>
+                </div>
+            </div>
+
+            <!-- Import Massal Siswa -->
+            <div class="bg-white p-6 rounded-xl shadow-md border border-slate-200">
+                <h2 class="text-lg font-bold mb-2 text-indigo-700">Import Data Siswa Massal (Excel / CSV)</h2>
+                <p class="text-xs text-slate-500 mb-4">Pastikan file Excel/CSV memiliki kolom header: <b>nis</b>, <b>nama</b>, dan <b>kelas</b>. Nama kelas akan otomatis terdaftar ke sistem.</p>
+                
+                <div class="space-y-4">
+                    <input type="file" id="file-excel" accept=".xlsx, .xls, .csv" class="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
+                    <button onclick="prosesImportExcel()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-lg w-full">
+                        📥 Upload & Simpan Ke Database
+                    </button>
+                </div>
+            </div>
+
+            <!-- Tabel Data Siswa -->
+            <div class="bg-white p-6 rounded-xl shadow-md border border-slate-200">
+                <h2 class="text-lg font-bold mb-4 text-indigo-700">Daftar Siswa Terdaftar</h2>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm text-left border-collapse">
+                        <thead class="bg-slate-100 text-slate-700 uppercase text-xs">
+                            <tr>
+                                <th class="p-3 border">NIS</th>
+                                <th class="p-3 border">Nama Siswa</th>
+                                <th class="p-3 border">Kelas</th>
+                                <th class="p-3 border text-center">Aksi</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tabel-siswa-body">
+                            <tr><td colspan="4" class="p-4 text-center text-slate-400">Belum ada data siswa.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+
+        <!-- TAB 3: REKAP NILAI -->
+        <section id="tab-rekap" class="space-y-6 hidden">
+            <div class="bg-white p-6 rounded-xl shadow-md border border-slate-200">
+                <div class="flex flex-wrap justify-between items-center mb-4 gap-3">
+                    <h2 class="text-lg font-bold text-indigo-700">Rekapitulasi Nilai Individu Siswa</h2>
+                    <div class="flex items-center gap-3">
+                        <select id="filter-kelas-rekap" onchange="renderTabelRekap()" class="border border-slate-300 rounded-lg p-2 text-sm">
+                            <option value="">Semua Kelas</option>
+                        </select>
+                        <!-- Tombol Download Excel/CSV (POIN 4) -->
+                        <button onclick="downloadRekapExcel()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-lg text-sm flex items-center gap-1 shadow-md">
+                            📊 Unduh Rekap (Excel)
+                        </button>
+                    </div>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm text-left border-collapse">
+                        <thead id="tabel-rekap-head" class="bg-indigo-50 text-indigo-900 uppercase text-xs">
+                            <!-- Dynamic Header dirender via JS -->
+                        </thead>
+                        <tbody id="tabel-rekap-body">
+                            <!-- Data rekap dirender via JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- File skrip aplikasi -->
+    <script type="module" src="app.js"></script>
+
+    <script>
+        // Fungsi pindah tab
+        function switchTab(tabName) {
+            ['kelompok', 'admin', 'rekap'].forEach(t => {
+                document.getElementById(`tab-${t}`).classList.add('hidden');
+                document.getElementById(`btn-tab-${t}`).classList.remove('bg-indigo-700');
+            });
+            document.getElementById(`tab-${tabName}`).classList.remove('hidden');
+            document.getElementById(`btn-tab-${tabName}`).classList.add('bg-indigo-700');
+        }
+    </script>
+</body>
+</html>
