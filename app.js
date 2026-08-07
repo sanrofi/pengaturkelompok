@@ -1,6 +1,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
 import { 
-    getDatabase, ref, set, push, get, child, remove 
+    getDatabase, ref, set, push, get, child, remove, update 
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
 const firebaseConfig = {
@@ -13,52 +13,135 @@ const firebaseConfig = {
   appId: "1:8185428648:web:f4c3a8d0cc7dd2f04ba09d"
 };
 
-const CLOUDINARY_CLOUD_NAME = "lk452fao";
-const CLOUDINARY_UPLOAD_PRESET = "kerja_kelompok";
-
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
+// Application State Variables
+let currentUser = null; 
 let masterSiswa = [];
 let masterKelas = [];
+let masterUsers = [];
 let dataKelompokAktif = [];
+let riwayatSesiKelasAktif = [];
 let pemetaanManualTemp = {}; 
 let exportDataCache = {}; 
 
+const AUTH_KEY = "LOGGED_IN_USER_SESSION";
 const DRAFT_SESSION_KEY = "DRAFT_KELOMPOK_SESSION";
 
 // ==========================================
-// A. INISIALISASI HALAMAN
+// A. AUTHENTICATION & SESSION MANAGEMENT
 // ==========================================
+
 window.addEventListener('DOMContentLoaded', async () => {
+    await pastikanAdminDefault();
+    cekSessionUser();
+});
+
+async function pastikanAdminDefault() {
+    try {
+        const snapshot = await get(child(ref(db), 'users'));
+        if (!snapshot.exists()) {
+            const adminRef = push(ref(db, 'users'));
+            await set(adminRef, {
+                nama: "Administrator Utama",
+                username: "admin",
+                password: "adminpassword",
+                role: "admin"
+            });
+        }
+    } catch (e) {
+        console.error("Gagal verifikasi admin default: ", e);
+    }
+}
+
+function cekSessionUser() {
+    const saved = localStorage.getItem(AUTH_KEY);
+    if (saved) {
+        currentUser = JSON.parse(saved);
+        renderAppUI();
+    } else {
+        document.getElementById('view-login').classList.remove('hidden');
+        document.getElementById('view-app').classList.add('hidden');
+    }
+}
+
+window.handleLogin = async function(e) {
+    e.preventDefault();
+    const u = document.getElementById('login-username').value.trim();
+    const p = document.getElementById('login-password').value.trim();
+
+    try {
+        const snapshot = await get(child(ref(db), 'users'));
+        if (snapshot.exists()) {
+            const users = snapshot.val();
+            const foundKey = Object.keys(users).find(k => users[k].username === u && users[k].password === p);
+
+            if (foundKey) {
+                currentUser = { id: foundKey, ...users[foundKey] };
+                localStorage.setItem(AUTH_KEY, JSON.stringify(currentUser));
+                document.getElementById('login-username').value = "";
+                document.getElementById('login-password').value = "";
+                renderAppUI();
+                return;
+            }
+        }
+        alert("Username atau Password salah!");
+    } catch (e) {
+        console.error("Login Error: ", e);
+        alert("Terjadi kesalahan sistem saat login.");
+    }
+}
+
+window.handleLogout = function() {
+    localStorage.removeItem(AUTH_KEY);
+    localStorage.removeItem(DRAFT_SESSION_KEY);
+    currentUser = null;
+    location.reload();
+}
+
+async function renderAppUI() {
+    document.getElementById('view-login').classList.add('hidden');
+    document.getElementById('view-app').classList.remove('hidden');
+
+    document.getElementById('user-display-nama').innerText = currentUser.nama;
+    document.getElementById('user-display-role').innerText = currentUser.role;
+
+    if (currentUser.role === 'admin') {
+        document.getElementById('btn-tab-users').classList.remove('hidden');
+        await muatDataUsers();
+    } else {
+        document.getElementById('btn-tab-users').classList.add('hidden');
+    }
+
     await muatDataKelas();
     await muatDataSiswa();
     renderDaftarKelasAdmin();
     renderDaftarKelasRekap();
     muatDraftSesi();
-});
+}
 
 // ==========================================
-// B. MODUL DATA KELAS & SISWA
+// B. DATA KELAS & SISWA (ISOLATED PER USER)
 // ==========================================
 
 async function muatDataKelas() {
     try {
-        const dbRef = ref(db);
-        const snapshot = await get(child(dbRef, 'classes'));
+        const snapshot = await get(child(ref(db), 'classes'));
         masterKelas = [];
 
         if (snapshot.exists()) {
             const data = snapshot.val();
             Object.keys(data).forEach(key => {
-                masterKelas.push({ id: key, ...data[key] });
+                // HANYA AMBIL KELAS MILIK USER AKTIF
+                if (data[key].userId === currentUser.id) {
+                    masterKelas.push({ id: key, ...data[key] });
+                }
             });
         }
 
-        // PERBAIKAN 1: Mencegah Duplikasi Nama Kelas dengan Normalisasi
         const uniqueClasses = [];
         const seenNames = new Set();
-
         masterKelas.forEach(k => {
             const cleanName = k.className.trim();
             if (!seenNames.has(cleanName.toLowerCase())) {
@@ -71,7 +154,6 @@ async function muatDataKelas() {
 
         const selectKelompok = document.getElementById('select-kelas');
         selectKelompok.innerHTML = '<option value="">-- Pilih Kelas --</option>';
-
         masterKelas.forEach(k => {
             selectKelompok.innerHTML += `<option value="${k.className}">${k.className}</option>`;
         });
@@ -87,7 +169,10 @@ async function simpanNamaKelasKeDB(namaKelas) {
     if (!sudahAda) {
         const classesRef = ref(db, 'classes');
         const newClassRef = push(classesRef);
-        await set(newClassRef, { className: cleanName });
+        await set(newClassRef, { 
+            className: cleanName,
+            userId: currentUser.id 
+        });
     }
 }
 
@@ -104,48 +189,45 @@ window.tambahKelas = async function() {
     renderDaftarKelasRekap();
 }
 
-// PERBAIKAN 2: Hapus Kelas beserta Seluruh Siswanya
 window.hapusKelas = async function(namaKelas) {
-    if (confirm(`Apakah Anda yakin ingin menghapus kelas "${namaKelas}" beserta seluruh data siswanya?`)) {
+    if (confirm(`Hapus kelas "${namaKelas}" beserta seluruh siswanya?`)) {
         try {
-            // Hapus dari node 'classes'
             const kelasObj = masterKelas.filter(k => k.className.toLowerCase() === namaKelas.toLowerCase());
             for (const k of kelasObj) {
                 await remove(ref(db, `classes/${k.id}`));
             }
 
-            // Hapus siswa yang berada di kelas tersebut
             const siswaDiKelas = masterSiswa.filter(s => s.kelas.trim().toLowerCase() === namaKelas.toLowerCase());
             for (const s of siswaDiKelas) {
                 await remove(ref(db, `students/${s.id}`));
             }
 
-            alert(`Kelas ${namaKelas} dan siswanya berhasil dihapus.`);
+            alert(`Kelas ${namaKelas} berhasil dihapus.`);
             await muatDataKelas();
             await muatDataSiswa();
             renderDaftarKelasAdmin();
             renderDaftarKelasRekap();
         } catch (e) {
             console.error("Gagal menghapus kelas: ", e);
-            alert("Gagal menghapus kelas.");
         }
     }
 }
 
 async function muatDataSiswa() {
     try {
-        const dbRef = ref(db);
-        const snapshot = await get(child(dbRef, 'students'));
+        const snapshot = await get(child(ref(db), 'students'));
         masterSiswa = [];
 
         if (snapshot.exists()) {
             const data = snapshot.val();
             Object.keys(data).forEach(key => {
-                masterSiswa.push({ 
-                    id: key, 
-                    ...data[key],
-                    kelas: data[key].kelas ? data[key].kelas.trim() : ""
-                });
+                if (data[key].userId === currentUser.id) {
+                    masterSiswa.push({ 
+                        id: key, 
+                        ...data[key],
+                        kelas: data[key].kelas ? data[key].kelas.trim() : ""
+                    });
+                }
             });
         }
     } catch (e) {
@@ -153,7 +235,6 @@ async function muatDataSiswa() {
     }
 }
 
-// PERBAIKAN 2: Tampilan Accordion Daftar Kelas di Tab Admin
 function renderDaftarKelasAdmin() {
     const container = document.getElementById('daftar-kelas-accordion');
     if (masterKelas.length === 0) {
@@ -167,7 +248,7 @@ function renderDaftarKelasAdmin() {
             <div class="border border-slate-200 rounded-lg overflow-hidden bg-white">
                 <div class="flex justify-between items-center p-4 bg-slate-50 hover:bg-slate-100 transition cursor-pointer" onclick="toggleAccordion('admin-kelas-${k.id}')">
                     <div class="font-bold text-slate-700 flex items-center gap-2">
-                        <span>📁 ${k.className}</span>
+                        <span>🏫 ${k.className}</span>
                         <span class="text-xs bg-indigo-100 text-indigo-700 font-semibold px-2 py-0.5 rounded-full">${siswaKelas.length} Siswa</span>
                     </div>
                     <div class="flex items-center gap-2" onclick="event.stopPropagation()">
@@ -223,7 +304,6 @@ window.hapusSiswa = async function(id) {
     }
 }
 
-// PERBAIKAN 1: Import Excel Tanpa Buat Kelas Duplikat
 window.prosesImportExcel = function() {
     const fileInput = document.getElementById('file-excel');
     const file = fileInput.files[0];
@@ -257,7 +337,12 @@ window.prosesImportExcel = function() {
                 if (nis && nama && kelas) {
                     await simpanNamaKelasKeDB(kelas);
                     const newStudentRef = push(studentsRef);
-                    await set(newStudentRef, { nis, nama, kelas });
+                    await set(newStudentRef, { 
+                        nis, 
+                        nama, 
+                        kelas,
+                        userId: currentUser.id 
+                    });
                     count++;
                 }
             }
@@ -277,17 +362,20 @@ window.prosesImportExcel = function() {
 }
 
 // ==========================================
-// C. LOGIKA PEMBAGIAN KELOMPOK & DRAFT SESI
+// C. LOGIKA PEMBAGIAN KELOMPOK & RIWAYAT SESI
 // ==========================================
 
-window.loadSiswaByKelas = function() {
+window.loadSiswaByKelas = async function() {
     const kelasSelected = document.getElementById('select-kelas').value;
     const boxPresensi = document.getElementById('box-presensi');
     const containerAbsen = document.getElementById('daftar-siswa-absen');
+    const boxOpsiRiwayat = document.getElementById('box-opsi-riwayat-kelompok');
+    
     document.getElementById('box-pemetaan-manual').classList.add('hidden');
 
     if (!kelasSelected) {
         boxPresensi.classList.add('hidden');
+        boxOpsiRiwayat.classList.add('hidden');
         return;
     }
 
@@ -295,6 +383,7 @@ window.loadSiswaByKelas = function() {
     if (siswaKelas.length === 0) {
         alert("Tidak ada data siswa di kelas ini! Tambahkan siswa terlebih dahulu.");
         boxPresensi.classList.add('hidden');
+        boxOpsiRiwayat.classList.add('hidden');
         return;
     }
 
@@ -306,6 +395,64 @@ window.loadSiswaByKelas = function() {
     `).join('');
 
     boxPresensi.classList.remove('hidden');
+
+    // Load Riwayat Pembagian Kelompok Sesi Sebelumnya
+    await loadRiwayatSesi(kelasSelected);
+}
+
+async function loadRiwayatSesi(kelasSelected) {
+    const selectRiwayat = document.getElementById('select-riwayat-sesi');
+    const boxOpsiRiwayat = document.getElementById('box-opsi-riwayat-kelompok');
+    
+    selectRiwayat.innerHTML = '<option value="">-- Pilih Sesi Riwayat --</option>';
+    riwayatSesiKelasAktif = [];
+
+    try {
+        const snapshot = await get(child(ref(db), 'group_sessions'));
+        if (snapshot.exists()) {
+            const data = snapshot.val();
+            Object.keys(data).forEach(key => {
+                const s = data[key];
+                if (s.userId === currentUser.id && s.kelas.toLowerCase() === kelasSelected.toLowerCase()) {
+                    riwayatSesiKelasAktif.push({ id: key, ...s });
+                }
+            });
+        }
+
+        if (riwayatSesiKelasAktif.length > 0) {
+            riwayatSesiKelasAktif.sort((a,b) => (a.nomorSesi || 1) - (b.nomorSesi || 1));
+            riwayatSesiKelasAktif.forEach(s => {
+                selectRiwayat.innerHTML += `<option value="${s.id}">Sesi Ke-${s.nomorSesi} (${s.groups ? s.groups.length : 0} Kelompok)</option>`;
+            });
+            boxOpsiRiwayat.classList.remove('hidden');
+        } else {
+            boxOpsiRiwayat.classList.add('hidden');
+        }
+    } catch (e) {
+        console.error("Gagal membaca riwayat sesi: ", e);
+    }
+}
+
+window.gunakanRiwayatKelompok = function() {
+    const selectedSesiId = document.getElementById('select-riwayat-sesi').value;
+    if (!selectedSesiId) return alert("Pilih sesi riwayat terlebih dahulu!");
+
+    const sesiObj = riwayatSesiKelasAktif.find(s => s.id === selectedSesiId);
+    if (!sesiObj || !sesiObj.groups) return alert("Data kelompok pada sesi ini tidak valid.");
+
+    // Salin struktur kelompok tanpa membawa nilai lama
+    dataKelompokAktif = sesiObj.groups.map(g => ({
+        groupId: g.groupId,
+        members: g.members || [],
+        score: 0
+    }));
+
+    document.getElementById('jumlah-kelompok').value = dataKelompokAktif.length;
+    document.getElementById('box-pemetaan-manual').classList.add('hidden');
+    renderKartuKelompok();
+    document.getElementById('box-hasil-kelompok').classList.remove('hidden');
+    simpanDraftSesi();
+    alert(`Berhasil menerapkan pembagian kelompok dari Sesi Ke-${sesiObj.nomorSesi}!`);
 }
 
 window.prosesBagiKelompok = function(tipe) {
@@ -322,7 +469,6 @@ window.prosesBagiKelompok = function(tipe) {
     dataKelompokAktif = Array.from({ length: totalKelompok }, (_, i) => ({
         groupId: i + 1,
         members: [],
-        photoUrl: "",
         score: 0
     }));
 
@@ -411,7 +557,6 @@ window.prosesPemetaanManualSelesai = function() {
     dataKelompokAktif = Array.from({ length: totalKelompok }, (_, i) => ({
         groupId: i + 1,
         members: [],
-        photoUrl: "",
         score: 0
     }));
 
@@ -434,6 +579,7 @@ function simpanDraftSesi() {
     if (dataKelompokAktif.length === 0) return;
 
     const draftData = {
+        userId: currentUser.id,
         kelas: kelasSelected,
         nomorSesi: document.getElementById('input-nomor-sesi').value || 1,
         jumlahKelompok: document.getElementById('jumlah-kelompok').value,
@@ -449,7 +595,7 @@ function muatDraftSesi() {
 
     try {
         const draft = JSON.parse(savedDraft);
-        if (draft && draft.dataKelompok && draft.dataKelompok.length > 0) {
+        if (draft && draft.userId === currentUser.id && draft.dataKelompok && draft.dataKelompok.length > 0) {
             document.getElementById('select-kelas').value = draft.kelas || "";
             document.getElementById('input-nomor-sesi').value = draft.nomorSesi || 1;
             document.getElementById('jumlah-kelompok').value = draft.jumlahKelompok || 2;
@@ -478,60 +624,19 @@ function renderKartuKelompok() {
                     <span class="text-xs bg-indigo-100 text-indigo-800 px-2 py-1 rounded-full font-semibold">${g.members.length} Anggota</span>
                 </div>
 
-                <ul class="space-y-1 mb-4 text-sm text-slate-600 max-h-40 overflow-y-auto">
+                <ul class="space-y-1 mb-4 text-sm text-slate-600 max-h-48 overflow-y-auto">
                     ${g.members.length > 0 
-                        ? g.members.map(m => `<li class="flex justify-between"><span>• ${m.nama}</span> <span class="text-xs text-slate-400">(${m.nis})</span></li>`).join('') 
+                        ? g.members.map(m => `<li class="flex justify-between border-b border-slate-50 py-1"><span>• ${m.nama}</span> <span class="text-xs text-slate-400">(${m.nis})</span></li>`).join('') 
                         : '<li class="text-slate-400 italic">Belum ada anggota</li>'}
                 </ul>
             </div>
 
-            <div class="space-y-3 pt-3 border-t">
-                <div>
-                    <label class="block text-xs font-bold text-slate-700 mb-1">Foto Kegiatan Live Kamera:</label>
-                    <input type="file" accept="image/*" capture="environment" onchange="uploadFotoLive(this, ${idx})" class="block w-full text-xs text-slate-500 file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:text-xs file:bg-indigo-50 file:text-indigo-700">
-                    ${g.photoUrl ? `<img src="${g.photoUrl}" class="mt-2 h-28 w-full object-cover rounded-lg border">` : ''}
-                </div>
-
-                <div>
-                    <label class="block text-xs font-bold text-slate-700 mb-1">Nilai Kelompok (0-100):</label>
-                    <input type="number" min="0" max="100" value="${g.score}" onchange="updateNilaiKelompok(${idx}, this.value)" class="w-full border border-slate-300 rounded-lg p-2 font-bold text-center text-indigo-700">
-                </div>
+            <div class="space-y-2 pt-3 border-t">
+                <label class="block text-xs font-bold text-slate-700">Nilai Kelompok (0-100):</label>
+                <input type="number" min="0" max="100" value="${g.score}" onchange="updateNilaiKelompok(${idx}, this.value)" class="w-full border border-slate-300 rounded-lg p-2 font-bold text-center text-indigo-700 text-lg">
             </div>
         </div>
     `).join('');
-}
-
-window.uploadFotoLive = async function(inputElement, groupIndex) {
-    const file = inputElement.files[0];
-    if (!file) return;
-
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
-
-    try {
-        inputElement.disabled = true;
-        
-        const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`, {
-            method: "POST",
-            body: formData
-        });
-
-        const data = await response.json();
-        if (data.secure_url) {
-            dataKelompokAktif[groupIndex].photoUrl = data.secure_url;
-            alert(`Foto Kelompok ${dataKelompokAktif[groupIndex].groupId} berhasil diunggah!`);
-            renderKartuKelompok();
-            simpanDraftSesi();
-        } else {
-            alert("Gagal mengunggah foto ke Cloudinary.");
-        }
-    } catch (err) {
-        console.error(err);
-        alert("Terjadi kesalahan saat unggah foto.");
-    } finally {
-        inputElement.disabled = false;
-    }
 }
 
 window.updateNilaiKelompok = function(index, value) {
@@ -539,7 +644,6 @@ window.updateNilaiKelompok = function(index, value) {
     simpanDraftSesi();
 }
 
-// PERBAIKAN 4: Simpan Sesi Berdasarkan Sesi Input Manual Guru
 window.simpanSeluruhSesi = async function() {
     const kelasSelected = document.getElementById('select-kelas').value;
     const nomorSesi = parseInt(document.getElementById('input-nomor-sesi').value) || 1;
@@ -548,6 +652,7 @@ window.simpanSeluruhSesi = async function() {
 
     try {
         const payloadSesi = {
+            userId: currentUser.id,
             kelas: kelasSelected,
             nomorSesi: nomorSesi,
             tanggal: new Date().toISOString(),
@@ -564,6 +669,7 @@ window.simpanSeluruhSesi = async function() {
         document.getElementById('box-hasil-kelompok').classList.add('hidden');
         dataKelompokAktif = [];
         
+        await loadSiswaByKelas();
         renderDaftarKelasRekap();
     } catch (e) {
         console.error("Error simpan sesi: ", e);
@@ -572,21 +678,22 @@ window.simpanSeluruhSesi = async function() {
 }
 
 // ==========================================
-// D. REKAPITULASI NILAI PER KELAS (PERBAIKAN 3)
+// D. REKAPITULASI NILAI PER KELAS
 // ==========================================
 
 async function renderDaftarKelasRekap() {
     const container = document.getElementById('daftar-kelas-rekap-accordion');
     
     try {
-        const dbRef = ref(db);
-        const snapshot = await get(child(dbRef, 'group_sessions'));
+        const snapshot = await get(child(ref(db), 'group_sessions'));
         let allSessions = [];
 
         if (snapshot.exists()) {
             const data = snapshot.val();
             Object.keys(data).forEach(key => {
-                allSessions.push({ id: key, ...data[key] });
+                if (data[key].userId === currentUser.id) {
+                    allSessions.push({ id: key, ...data[key] });
+                }
             });
         }
 
@@ -596,14 +703,10 @@ async function renderDaftarKelasRekap() {
         }
 
         container.innerHTML = masterKelas.map(k => {
-            // Filter sesi & siswa untuk kelas ini
             const sesiKelas = allSessions.filter(s => s.kelas.toLowerCase() === k.className.toLowerCase());
             const siswaKelas = masterSiswa.filter(s => s.kelas.toLowerCase() === k.className.toLowerCase());
 
-            // Dapatkan list nomor sesi unik
             const nomorSesiUnik = [...new Set(sesiKelas.map(s => s.nomorSesi || 1))].sort((a,b) => a - b);
-
-            // Buat Cache untuk Download Excel per Kelas
             const exportData = [];
 
             let tbodyHTML = siswaKelas.map(s => {
@@ -613,26 +716,23 @@ async function renderDaftarKelasRekap() {
 
                 let kolomSesiHTML = nomorSesiUnik.map(noSesi => {
                     let nilaiSiswa = "-";
-                    // Cari sesi dengan nomorSesi ini
                     const sesiObj = sesiKelas.find(sk => (sk.nomorSesi || 1) === noSesi);
 
                     if (sesiObj && sesiObj.groups) {
                         sesiObj.groups.forEach(g => {
-							// KODE BARU (Aman dan Presisi)
-							if (g.members && g.members.length > 0) {
-								const isMember = g.members.some(m => {
-									// Cocokkan berdasarkan ID atau NIS (String & Number safe)
-									if (m.id && s.id && String(m.id) === String(s.id)) return true;
-									if (m.nis && s.nis && String(m.nis).trim() === String(s.nis).trim()) return true;
-									return false;
-								});
+                            if (g.members && g.members.length > 0) {
+                                const isMember = g.members.some(m => {
+                                    if (m.id && s.id && String(m.id) === String(s.id)) return true;
+                                    if (m.nis && s.nis && String(m.nis).trim() === String(s.nis).trim()) return true;
+                                    return false;
+                                });
 
-								if (isMember) {
-									nilaiSiswa = Number(g.score) || 0;
-									totalSkor += nilaiSiswa;
-									jumlahSesiDiikuti++;
-								}
-							}
+                                if (isMember) {
+                                    nilaiSiswa = Number(g.score) || 0;
+                                    totalSkor += nilaiSiswa;
+                                    jumlahSesiDiikuti++;
+                                }
+                            }
                         });
                     }
 
@@ -665,7 +765,7 @@ async function renderDaftarKelasRekap() {
                         </div>
                         <div onclick="event.stopPropagation()">
                             <button onclick="downloadRekapExcelPerKelas('${k.className}')" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1 rounded text-xs">
-                                📊 Unduh Excel
+                                📥 Unduh Excel
                             </button>
                         </div>
                     </div>
@@ -709,4 +809,114 @@ window.downloadRekapExcelPerKelas = function(namaKelas) {
     XLSX.utils.book_append_sheet(workbook, worksheet, "Rekap Nilai");
 
     XLSX.writeFile(workbook, fileName);
+}
+
+// ==========================================
+// E. PANEL ADMIN: MANAJEMEN USER (ADMIN ONLY)
+// ==========================================
+
+async function muatDataUsers() {
+    try {
+        const snapshot = await get(child(ref(db), 'users'));
+        masterUsers = [];
+
+        if (snapshot.exists()) {
+            const data = snapshot.val();
+            Object.keys(data).forEach(key => {
+                masterUsers.push({ id: key, ...data[key] });
+            });
+        }
+        renderTabelUsers();
+    } catch (e) {
+        console.error("Gagal memuat data users: ", e);
+    }
+}
+
+function renderTabelUsers() {
+    const container = document.getElementById('tabel-daftar-users');
+    if (!container) return;
+
+    if (masterUsers.length === 0) {
+        container.innerHTML = `<tr><td colspan="5" class="text-center p-4 text-slate-400">Belum ada user terdaftar.</td></tr>`;
+        return;
+    }
+
+    container.innerHTML = masterUsers.map(u => `
+        <tr class="border-b hover:bg-slate-50">
+            <td class="p-2 border font-bold">${u.nama}</td>
+            <td class="p-2 border">${u.username}</td>
+            <td class="p-2 border font-mono">${u.password}</td>
+            <td class="p-2 border">
+                <span class="px-2 py-0.5 text-[10px] font-bold rounded-full ${u.role === 'admin' ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'} capitalize">
+                    ${u.role}
+                </span>
+            </td>
+            <td class="p-2 border text-center space-x-2">
+                <button onclick="editUser('${u.id}')" class="text-indigo-600 hover:underline font-bold">Edit</button>
+                ${u.id === currentUser.id ? '' : `<button onclick="hapusUser('${u.id}')" class="text-red-600 hover:underline font-bold">Hapus</button>`}
+            </td>
+        </tr>
+    `).join('');
+}
+
+window.handleSaveUser = async function(e) {
+    e.preventDefault();
+    const editId = document.getElementById('user-edit-id').value;
+    const nama = document.getElementById('user-nama').value.trim();
+    const username = document.getElementById('user-username').value.trim();
+    const password = document.getElementById('user-password').value.trim();
+    const role = document.getElementById('user-role').value;
+
+    const duplicate = masterUsers.some(u => u.username.toLowerCase() === username.toLowerCase() && u.id !== editId);
+    if (duplicate) return alert("Username tersebut sudah digunakan!");
+
+    try {
+        if (editId) {
+            await update(ref(db, `users/${editId}`), { nama, username, password, role });
+            alert("Data user berhasil diperbarui!");
+        } else {
+            const newUserRef = push(ref(db, 'users'));
+            await set(newUserRef, { nama, username, password, role });
+            alert("User baru berhasil ditambahkan!");
+        }
+
+        resetFormUser();
+        await muatDataUsers();
+    } catch (err) {
+        console.error("Gagal menyimpan user: ", err);
+        alert("Terjadi kesalahan saat menyimpan user.");
+    }
+}
+
+window.editUser = function(id) {
+    const u = masterUsers.find(item => item.id === id);
+    if (!u) return;
+
+    document.getElementById('form-user-title').innerText = "Edit Data User / Guru";
+    document.getElementById('user-edit-id').value = u.id;
+    document.getElementById('user-nama').value = u.nama;
+    document.getElementById('user-username').value = u.username;
+    document.getElementById('user-password').value = u.password;
+    document.getElementById('user-role').value = u.role;
+}
+
+window.resetFormUser = function() {
+    document.getElementById('form-user-title').innerText = "Tambah User / Guru Baru";
+    document.getElementById('user-edit-id').value = "";
+    document.getElementById('user-nama').value = "";
+    document.getElementById('user-username').value = "";
+    document.getElementById('user-password').value = "";
+    document.getElementById('user-role').value = "user";
+}
+
+window.hapusUser = async function(id) {
+    if (confirm("Apakah Anda yakin ingin menghapus user ini?")) {
+        try {
+            await remove(ref(db, `users/${id}`));
+            alert("User berhasil dihapus.");
+            await muatDataUsers();
+        } catch (e) {
+            console.error("Gagal menghapus user: ", e);
+        }
+    }
 }

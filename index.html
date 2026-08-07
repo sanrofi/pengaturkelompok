@@ -4,156 +4,239 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Aplikasi Pengatur Kelompok & Penilaian</title>
-    <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- SheetJS CDN untuk Import & Export Excel/CSV -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body class="bg-slate-100 text-slate-800 font-sans min-h-screen pb-12">
 
-    <!-- Header / Navigasi -->
-    <header class="bg-indigo-600 text-white p-4 shadow-lg sticky top-0 z-50">
-        <div class="max-w-4xl mx-auto flex justify-between items-center">
-            <h1 class="text-xl font-bold flex items-center gap-2">
-                👥 KelompokSiswa
-            </h1>
-            <nav class="flex gap-2">
-                <button onclick="switchTab('kelompok')" id="btn-tab-kelompok" class="px-4 py-2 rounded-lg bg-indigo-700 font-semibold text-sm">Bagi Kelompok</button>
-                <button onclick="switchTab('admin')" id="btn-tab-admin" class="px-4 py-2 rounded-lg hover:bg-indigo-500 font-semibold text-sm">Admin & Data Siswa</button>
-                <button onclick="switchTab('rekap')" id="btn-tab-rekap" class="px-4 py-2 rounded-lg hover:bg-indigo-500 font-semibold text-sm">Rekap Nilai</button>
-            </nav>
-        </div>
-    </header>
-
-    <main class="max-w-4xl mx-auto mt-6 p-4">
-
-        <!-- TAB 1: BAGI KELOMPOK -->
-        <section id="tab-kelompok" class="space-y-6">
-            <div class="bg-white p-6 rounded-xl shadow-md border border-slate-200">
-                <h2 class="text-lg font-bold mb-4 text-indigo-700">1. Pengaturan Awal Sesi</h2>
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div>
-                        <label class="block text-sm font-medium mb-1">Pilih Kelas:</label>
-                        <select id="select-kelas" onchange="loadSiswaByKelas()" class="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500">
-                            <option value="">-- Pilih Kelas --</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium mb-1">Sesi Ke-:</label>
-                        <input type="number" id="input-nomor-sesi" min="1" value="1" placeholder="Misal: 1" class="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium mb-1">Jumlah Kelompok:</label>
-                        <input type="number" id="jumlah-kelompok" min="1" value="2" class="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500">
-                    </div>
-                </div>
+    <!-- VIEW LOGIN (Tampil Saat Belum Auth) -->
+    <div id="view-login" class="min-h-screen flex items-center justify-center p-4">
+        <div class="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md border border-slate-200 space-y-6">
+            <div class="text-center">
+                <h1 class="text-2xl font-bold text-indigo-700 flex justify-center items-center gap-2">
+                    👥 KelompokSiswa
+                </h1>
+                <p class="text-xs text-slate-500 mt-1">Silakan masuk menggunakan akun Anda</p>
             </div>
-
-            <!-- Presensi Ketidakhadiran -->
-            <div id="box-presensi" class="bg-white p-6 rounded-xl shadow-md border border-slate-200 hidden">
-                <h2 class="text-lg font-bold mb-2 text-indigo-700">2. Tandai Siswa Yang TIDAK HADIR</h2>
-                <p class="text-xs text-slate-500 mb-4">Siswa yang dicentang tidak akan dimasukkan ke dalam kelompok.</p>
-                <div id="daftar-siswa-absen" class="grid grid-cols-2 md:grid-cols-3 gap-3 max-h-60 overflow-y-auto p-2 border rounded-lg bg-slate-50 mb-6">
-                    <!-- Checkbox siswa muncul via JS -->
+            <form id="form-login" onsubmit="handleLogin(event)" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold mb-1 text-slate-700">Username</label>
+                    <input type="text" id="login-username" required class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500">
                 </div>
-
-                <div class="flex gap-3 border-t pt-4">
-                    <button onclick="prosesBagiKelompok('acak')" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl shadow-md transition">
-                        🎲 Bagi Kelompok Otomatis (Acak)
-                    </button>
-                    <button onclick="tampilkanPemetaanManual()" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl shadow-md transition">
-                        ✏️ Pemetaan Kelompok Manual
-                    </button>
+                <div>
+                    <label class="block text-xs font-bold mb-1 text-slate-700">Password</label>
+                    <input type="password" id="login-password" required class="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500">
                 </div>
-            </div>
-
-            <!-- Pemetaan Manual -->
-            <div id="box-pemetaan-manual" class="bg-white p-6 rounded-xl shadow-md border border-slate-200 space-y-4 hidden">
-                <div class="flex justify-between items-center border-b pb-3">
-                    <h2 class="text-lg font-bold text-emerald-700">Petakan Siswa ke Kelompok</h2>
-                    <div id="ringkasan-kuota-kelompok" class="flex gap-2 text-xs font-semibold"></div>
-                </div>
-                <p class="text-xs text-slate-500">Pilih nomor kelompok untuk masing-masing siswa yang hadir:</p>
-
-                <div id="daftar-pemetaan-manual" class="space-y-2 max-h-80 overflow-y-auto p-2 border rounded-lg bg-slate-50"></div>
-
-                <button onclick="prosesPemetaanManualSelesai()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl shadow-md">
-                    ✅ Selesaikan Pembagian Kelompok
+                <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl shadow-md transition">
+                    Masuk ke Aplikasi
                 </button>
-            </div>
+            </form>
+        </div>
+    </div>
 
-            <!-- Hasil Kelompok & Penilaian -->
-            <div id="box-hasil-kelompok" class="space-y-6 hidden">
-                <div class="flex justify-between items-center">
-                    <h2 class="text-xl font-bold text-slate-800">3. Pembagian Kelompok & Penilaian</h2>
-                    <button onclick="simpanSeluruhSesi()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-6 py-2 rounded-xl shadow-md">
-                        💾 Simpan Semua Nilai & Sesi
-                    </button>
-                </div>
-
-                <div id="kontainer-kartu-kelompok" class="grid grid-cols-1 md:grid-cols-2 gap-6"></div>
-            </div>
-        </section>
-
-
-        <!-- TAB 2: ADMIN & DATA SISWA -->
-        <section id="tab-admin" class="space-y-6 hidden">
-            <!-- Tambah Kelas Baru -->
-            <div class="bg-white p-6 rounded-xl shadow-md border border-slate-200">
-                <h2 class="text-lg font-bold mb-4 text-indigo-700">Tambah Kelas Baru (Manual)</h2>
-                <div class="flex gap-3">
-                    <input type="text" id="input-nama-kelas" placeholder="Contoh: XI A AKL" class="flex-1 border border-slate-300 rounded-lg p-2">
-                    <button onclick="tambahKelas()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-lg">Simpan Kelas</button>
-                </div>
-            </div>
-
-            <!-- Import Massal Siswa -->
-            <div class="bg-white p-6 rounded-xl shadow-md border border-slate-200">
-                <h2 class="text-lg font-bold mb-2 text-indigo-700">Import Data Siswa Massal (Excel / CSV)</h2>
-                <p class="text-xs text-slate-500 mb-4">Pastikan file Excel/CSV memiliki kolom header: <b>nis</b>, <b>nama</b>, dan <b>kelas</b>.</p>
+    <!-- VIEW UTAMA APLIKASI (Hidden saat belum Auth) -->
+    <div id="view-app" class="hidden">
+        <!-- Header / Navigasi -->
+        <header class="bg-indigo-600 text-white p-4 shadow-lg sticky top-0 z-50">
+            <div class="max-w-5xl mx-auto flex flex-wrap justify-between items-center gap-4">
+                <h1 class="text-xl font-bold flex items-center gap-2">👥 KelompokSiswa</h1>
                 
-                <div class="space-y-4">
-                    <input type="file" id="file-excel" accept=".xlsx, .xls, .csv" class="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
-                    <button onclick="prosesImportExcel()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-lg w-full">
-                        📥 Upload & Simpan Ke Database
+                <nav class="flex flex-wrap items-center gap-2">
+                    <button onclick="switchTab('kelompok')" id="btn-tab-kelompok" class="px-3 py-1.5 rounded-lg bg-indigo-700 font-semibold text-xs md:text-sm">Bagi Kelompok</button>
+                    <button onclick="switchTab('admin')" id="btn-tab-admin" class="px-3 py-1.5 rounded-lg hover:bg-indigo-500 font-semibold text-xs md:text-sm">Admin & Data Siswa</button>
+                    <button onclick="switchTab('rekap')" id="btn-tab-rekap" class="px-3 py-1.5 rounded-lg hover:bg-indigo-500 font-semibold text-xs md:text-sm">Rekap Nilai</button>
+                    <button onclick="switchTab('users')" id="btn-tab-users" class="px-3 py-1.5 rounded-lg hover:bg-indigo-500 font-semibold text-xs md:text-sm bg-amber-500 text-slate-900 hidden">🔑 Kelola Users</button>
+                </nav>
+
+                <div class="flex items-center gap-3 border-l border-indigo-400 pl-4 text-xs">
+                    <div class="text-right">
+                        <span id="user-display-nama" class="font-bold block"></span>
+                        <span id="user-display-role" class="text-indigo-200 capitalize text-[10px]"></span>
+                    </div>
+                    <button onclick="handleLogout()" class="bg-red-500 hover:bg-red-600 text-white font-bold px-3 py-1.5 rounded-lg">Keluar</button>
+                </div>
+            </div>
+        </header>
+
+        <main class="max-w-5xl mx-auto mt-6 p-4">
+
+            <!-- TAB 1: BAGI KELOMPOK -->
+            <section id="tab-kelompok" class="space-y-6">
+                <div class="bg-white p-6 rounded-xl shadow-md border border-slate-200">
+                    <h2 class="text-lg font-bold mb-4 text-indigo-700">1. Pengaturan Awal Sesi</h2>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                            <label class="block text-xs font-bold mb-1">Pilih Kelas:</label>
+                            <select id="select-kelas" onchange="loadSiswaByKelas()" class="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500 text-sm">
+                                <option value="">-- Pilih Kelas --</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold mb-1">Sesi Ke-:</label>
+                            <input type="number" id="input-nomor-sesi" min="1" value="1" placeholder="Misal: 1" class="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500 text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold mb-1">Jumlah Kelompok:</label>
+                            <input type="number" id="jumlah-kelompok" min="1" value="2" class="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500 text-sm">
+                        </div>
+                    </div>
+
+                    <!-- Pilihan Memakai Kelompok Permanen Dari Sesi Sebelumnya -->
+                    <div id="box-opsi-riwayat-kelompok" class="mt-4 pt-4 border-t hidden">
+                        <label class="block text-xs font-bold text-slate-700 mb-1">Gunakan Pembagian Kelompok Dari Sesi Sebelumnya:</label>
+                        <div class="flex gap-2">
+                            <select id="select-riwayat-sesi" class="flex-1 border border-slate-300 rounded-lg p-2 text-xs">
+                                <option value="">-- Pilih Sesi Riwayat --</option>
+                            </select>
+                            <button onclick="gunakanRiwayatKelompok()" class="bg-amber-600 hover:bg-amber-700 text-white font-bold px-4 py-2 rounded-lg text-xs">
+                                🔄 Terapkan Pembagian Ini
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Presensi Ketidakhadiran -->
+                <div id="box-presensi" class="bg-white p-6 rounded-xl shadow-md border border-slate-200 hidden">
+                    <h2 class="text-lg font-bold mb-2 text-indigo-700">2. Tandai Siswa Yang TIDAK HADIR</h2>
+                    <p class="text-xs text-slate-500 mb-4">Siswa yang dicentang tidak akan dimasukkan ke dalam kelompok baru.</p>
+                    <div id="daftar-siswa-absen" class="grid grid-cols-2 md:grid-cols-3 gap-3 max-h-60 overflow-y-auto p-2 border rounded-lg bg-slate-50 mb-6"></div>
+
+                    <div class="flex flex-col md:flex-row gap-3 border-t pt-4">
+                        <button onclick="prosesBagiKelompok('acak')" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl shadow-md transition text-sm">
+                            🎲 Bagi Kelompok Otomatis (Acak)
+                        </button>
+                        <button onclick="tampilkanPemetaanManual()" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl shadow-md transition text-sm">
+                            ✏️ Pemetaan Kelompok Manual
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Pemetaan Manual -->
+                <div id="box-pemetaan-manual" class="bg-white p-6 rounded-xl shadow-md border border-slate-200 space-y-4 hidden">
+                    <div class="flex justify-between items-center border-b pb-3">
+                        <h2 class="text-lg font-bold text-emerald-700">Petakan Siswa ke Kelompok</h2>
+                        <div id="ringkasan-kuota-kelompok" class="flex gap-2 text-xs font-semibold"></div>
+                    </div>
+                    <div id="daftar-pemetaan-manual" class="space-y-2 max-h-80 overflow-y-auto p-2 border rounded-lg bg-slate-50"></div>
+                    <button onclick="prosesPemetaanManualSelesai()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl shadow-md text-sm">
+                        ✅ Selesaikan Pembagian Kelompok
                     </button>
                 </div>
-            </div>
 
-            <!-- Daftar Kelas & Siswa (Model Accordion) -->
-            <div class="bg-white p-6 rounded-xl shadow-md border border-slate-200">
-                <h2 class="text-lg font-bold mb-4 text-indigo-700">Daftar Kelas & Siswa Terdaftar</h2>
-                <div id="daftar-kelas-accordion" class="space-y-3">
-                    <!-- List Kelas & Siswa dimuat secara modular -->
+                <!-- Hasil Kelompok & Penilaian -->
+                <div id="box-hasil-kelompok" class="space-y-6 hidden">
+                    <div class="flex justify-between items-center">
+                        <h2 class="text-xl font-bold text-slate-800">3. Pembagian Kelompok & Penilaian</h2>
+                        <button onclick="simpanSeluruhSesi()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-6 py-2 rounded-xl shadow-md text-sm">
+                            💾 Simpan Semua Nilai & Sesi
+                        </button>
+                    </div>
+                    <div id="kontainer-kartu-kelompok" class="grid grid-cols-1 md:grid-cols-2 gap-6"></div>
                 </div>
-            </div>
-        </section>
+            </section>
 
-
-        <!-- TAB 3: REKAP NILAI -->
-        <section id="tab-rekap" class="space-y-6 hidden">
-            <div class="bg-white p-6 rounded-xl shadow-md border border-slate-200">
-                <h2 class="text-lg font-bold mb-4 text-indigo-700">Rekapitulasi Nilai Per Kelas</h2>
-                <p class="text-xs text-slate-500 mb-4">Klik pada nama kelas untuk menampilkan rekapitulasi nilai siswa kelas tersebut.</p>
-
-                <div id="daftar-kelas-rekap-accordion" class="space-y-3">
-                    <!-- List Kelas Rekap dimuat di sini -->
+            <!-- TAB 2: ADMIN & DATA SISWA -->
+            <section id="tab-admin" class="space-y-6 hidden">
+                <div class="bg-white p-6 rounded-xl shadow-md border border-slate-200">
+                    <h2 class="text-lg font-bold mb-4 text-indigo-700">Tambah Kelas Baru (Manual)</h2>
+                    <div class="flex gap-3">
+                        <input type="text" id="input-nama-kelas" placeholder="Contoh: XI A AKL" class="flex-1 border border-slate-300 rounded-lg p-2 text-sm">
+                        <button onclick="tambahKelas()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-lg text-sm">Simpan Kelas</button>
+                    </div>
                 </div>
-            </div>
-        </section>
 
-    </main>
+                <div class="bg-white p-6 rounded-xl shadow-md border border-slate-200">
+                    <h2 class="text-lg font-bold mb-2 text-indigo-700">Import Data Siswa Massal (Excel / CSV)</h2>
+                    <p class="text-xs text-slate-500 mb-4">Pastikan file Excel/CSV memiliki kolom header: <b>nis</b>, <b>nama</b>, dan <b>kelas</b>.</p>
+                    <div class="space-y-4">
+                        <input type="file" id="file-excel" accept=".xlsx, .xls, .csv" class="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
+                        <button onclick="prosesImportExcel()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-lg w-full text-sm">
+                            📥 Upload & Simpan Ke Database
+                        </button>
+                    </div>
+                </div>
+
+                <div class="bg-white p-6 rounded-xl shadow-md border border-slate-200">
+                    <h2 class="text-lg font-bold mb-4 text-indigo-700">Daftar Kelas & Siswa Terdaftar</h2>
+                    <div id="daftar-kelas-accordion" class="space-y-3"></div>
+                </div>
+            </section>
+
+            <!-- TAB 3: REKAP NILAI -->
+            <section id="tab-rekap" class="space-y-6 hidden">
+                <div class="bg-white p-6 rounded-xl shadow-md border border-slate-200">
+                    <h2 class="text-lg font-bold mb-4 text-indigo-700">Rekapitulasi Nilai Per Kelas</h2>
+                    <div id="daftar-kelas-rekap-accordion" class="space-y-3"></div>
+                </div>
+            </section>
+
+            <!-- TAB 4: MANAJEMEN USER (ADMIN ONLY) -->
+            <section id="tab-users" class="space-y-6 hidden">
+                <div class="bg-white p-6 rounded-xl shadow-md border border-slate-200">
+                    <h2 class="text-lg font-bold mb-4 text-indigo-700" id="form-user-title">Tambah User / Guru Baru</h2>
+                    <form id="form-user-admin" onsubmit="handleSaveUser(event)" class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <input type="hidden" id="user-edit-id" value="">
+                        <div>
+                            <label class="block text-xs font-bold mb-1">Nama Lengkap</label>
+                            <input type="text" id="user-nama" required class="w-full border border-slate-300 rounded-lg p-2 text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold mb-1">Username</label>
+                            <input type="text" id="user-username" required class="w-full border border-slate-300 rounded-lg p-2 text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold mb-1">Password</label>
+                            <input type="text" id="user-password" required class="w-full border border-slate-300 rounded-lg p-2 text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold mb-1">Role/Akses</label>
+                            <select id="user-role" class="w-full border border-slate-300 rounded-lg p-2 text-sm">
+                                <option value="user">Guru / User</option>
+                                <option value="admin">Administrator</option>
+                            </select>
+                        </div>
+                        <div class="md:col-span-4 flex justify-end gap-2">
+                            <button type="button" onclick="resetFormUser()" class="bg-slate-200 text-slate-700 font-bold px-4 py-2 rounded-lg text-sm">Batal</button>
+                            <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-6 py-2 rounded-lg text-sm">Simpan User</button>
+                        </div>
+                    </form>
+                </div>
+
+                <div class="bg-white p-6 rounded-xl shadow-md border border-slate-200">
+                    <h2 class="text-lg font-bold mb-4 text-indigo-700">Daftar Pengguna Aplikasi</h2>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-xs text-left border-collapse">
+                            <thead class="bg-slate-100">
+                                <tr>
+                                    <th class="p-2 border">Nama Lengkap</th>
+                                    <th class="p-2 border">Username</th>
+                                    <th class="p-2 border">Password</th>
+                                    <th class="p-2 border">Role</th>
+                                    <th class="p-2 border text-center">Aksi</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tabel-daftar-users"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+        </main>
+    </div>
 
     <script type="module" src="app.js"></script>
-
     <script>
         function switchTab(tabName) {
-            ['kelompok', 'admin', 'rekap'].forEach(t => {
-                document.getElementById(`tab-${t}`).classList.add('hidden');
-                document.getElementById(`btn-tab-${t}`).classList.remove('bg-indigo-700');
+            ['kelompok', 'admin', 'rekap', 'users'].forEach(t => {
+                const tabEl = document.getElementById(`tab-${t}`);
+                const btnEl = document.getElementById(`btn-tab-${t}`);
+                if (tabEl) tabEl.classList.add('hidden');
+                if (btnEl) btnEl.classList.remove('bg-indigo-700');
             });
-            document.getElementById(`tab-${tabName}`).classList.remove('hidden');
-            document.getElementById(`btn-tab-${tabName}`).classList.add('bg-indigo-700');
+            const activeTab = document.getElementById(`tab-${tabName}`);
+            const activeBtn = document.getElementById(`btn-tab-${tabName}`);
+            if (activeTab) activeTab.classList.remove('hidden');
+            if (activeBtn) activeBtn.classList.add('bg-indigo-700');
         }
     </script>
 </body>
